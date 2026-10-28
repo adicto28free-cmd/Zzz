@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="es"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1f7ae0">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<title>Byte · Asistente de informática</title>
+<style>
+:root{--bg:#f4f6f8;--card:#fff;--ink:#16202a;--muted:#5b6b7a;--acc:#1f7ae0;--accink:#fff;--me:#dbeafe;--line:#dde3e9}
+@media (prefers-color-scheme:dark){:root{--bg:#0f1720;--card:#18232f;--ink:#e8eef4;--muted:#93a4b5;--acc:#4c9bff;--accink:#08121c;--me:#1d3a5c;--line:#263544}}
+*,*::before,*::after{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;display:flex;flex-direction:column;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+header{padding:12px 14px;border-bottom:1px solid var(--line);background:var(--card);display:flex;align-items:center;justify-content:space-between;gap:8px}
+h1{font-size:1.1rem;margin:0}.sub{font-size:.78rem;color:var(--muted)}
+#log{flex:1;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:10px}
+.m{max-width:88%;padding:10px 13px;border-radius:14px;line-height:1.45;font-size:.95rem;white-space:pre-wrap;word-wrap:break-word;background:var(--card);border:1px solid var(--line)}
+.m.me{align-self:flex-end;background:var(--me);border-color:transparent}
+.m.sys{align-self:center;background:none;border:none;color:var(--muted);font-size:.82rem;text-align:center}
+footer{padding:10px 12px 12px;background:var(--card);border-top:1px solid var(--line)}
+.row{display:flex;gap:8px;align-items:center}
+input[type=text],input[type=password]{flex:1;min-width:0;padding:11px 12px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--ink);font-size:1rem}
+button{font:inherit;border:0;border-radius:10px;padding:11px 14px;background:var(--acc);color:var(--accink);font-weight:600;cursor:pointer}
+button.ghost{background:var(--bg);color:var(--ink);border:1px solid var(--line)}
+button.on{outline:3px solid var(--acc);outline-offset:2px}
+#mic{width:58px;height:58px;border-radius:50%;font-size:1.5rem;padding:0;flex:none}
+#mic.rec{background:#e5484d;color:#fff}
+.tools{display:flex;gap:8px;margin-top:8px}
+#cfg{display:none;padding:12px 14px;background:var(--card);border-bottom:1px solid var(--line);flex-direction:column;gap:8px}
+#cfg label{font-size:.8rem;color:var(--muted);display:flex;flex-direction:column;gap:4px}
+</style></head><body>
+<header><div><h1 id="title">Byte</h1><div class="sub" id="st">Profesor y ayudante de informática</div></div>
+<div class="row"><button class="ghost" id="stop" type="button">Callar</button><button class="ghost" id="gear" type="button" aria-label="Ajustes">⚙️</button></div></header>
+<div id="cfg">
+<label>Clave de Gemini (se guarda solo en este móvil)<input type="password" id="key" autocomplete="off" placeholder="Pega aquí tu clave"></label>
+<label>Modelo<input type="text" id="model" value="gemini-3.5-flash"></label>
+<label>Nombre del asistente<input type="text" id="nm" value="Byte" maxlength="20"></label>
+<button id="save" type="button">Guardar</button>
+</div>
+<div id="log" aria-live="polite"></div>
+<footer>
+<div class="row">
+<button id="mic" type="button" aria-label="Hablar">🎤</button>
+<input type="text" id="q" placeholder="Escribe tu pregunta de informática…" autocomplete="off">
+<button id="send" type="button">Enviar</button>
+</div>
+<div class="tools"><button class="ghost" id="wake" type="button" style="flex:1">Escucha por nombre: apagada</button></div>
+</footer>
+<script>
+var $=function(i){return document.getElementById(i);};
+var log=$('log'),q=$('q'),mic=$('mic'),wakeBtn=$('wake'),nm=$('nm'),st=$('st'),title=$('title'),keyI=$('key'),modelI=$('model'),cfg=$('cfg');
+var convo=[],busy=false,wakeOn=false,awaiting=false,speaking=false,rec=null,recActive=false,pushMode=false;
+var SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+var INSTR="Eres un profesor y ayudante de informática. Sabes de todo: desde lo más básico hasta temas avanzados (programación, redes, sistemas operativos, hardware, ciberseguridad, bases de datos, producción musical con DAW, etc.). Respondes siempre en español, con frases cortas y claras, sin markdown, sin listas con símbolos y sin emojis, porque tu respuesta se leerá en voz alta. Adapta el nivel a quien pregunta, usa ejemplos sencillos y, si te piden un ejercicio, ponlo y corrígelo. Si no estás seguro de algo, dilo en vez de inventar. Máximo unas 6 frases salvo que pidan más detalle.";
+function get(k,d){try{return localStorage.getItem(k)||d;}catch(e){return d;}}
+function put(k,v){try{localStorage.setItem(k,v);}catch(e){}}
+keyI.value=get('key','');modelI.value=get('model','gemini-3.5-flash');nm.value=get('nombre','Byte');
+function setName(){title.textContent=nm.value||'Byte';}setName();
+$('gear').onclick=function(){cfg.style.display=cfg.style.display==='flex'?'none':'flex';};
+$('save').onclick=function(){put('key',keyI.value.trim());put('model',modelI.value.trim()||'gemini-3.5-flash');put('nombre',nm.value.trim()||'Byte');setName();cfg.style.display='none';add('Ajustes guardados.','sys');};
+function add(t,c){var d=document.createElement('div');d.className='m '+c;d.textContent=t;log.appendChild(d);log.scrollTop=log.scrollHeight;return d;}
+add('Hola, soy tu profesor de informática. Pulsa ⚙️ y pega tu clave de Gemini la primera vez. Luego pregúntame con el micrófono o escribiendo.','sys');
+function norm(s){return s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');}
+function clean(t){return t.replace(/[*#`_>]/g,'').replace(/\s+/g,' ').trim();}
+function speak(t){
+ if(!window.speechSynthesis){return;}
+ speechSynthesis.cancel();
+ var u=new SpeechSynthesisUtterance(clean(t));u.lang='es-ES';
+ var vs=speechSynthesis.getVoices().filter(function(v){return v.lang&&v.lang.indexOf('es')===0;});if(vs.length){u.voice=vs[0];}
+ speaking=true;pauseRec();
+ u.onend=function(){speaking=false;resumeRec();};
+ u.onerror=function(e){speaking=false;add('Voz: '+(e.error||'error'),'sys');resumeRec();};
+ speechSynthesis.speak(u);
+}
+$('stop').onclick=function(){if(window.speechSynthesis){speechSynthesis.cancel();}speaking=false;resumeRec();};
+async function ask(text){
+ if(busy||!text.trim()){return;}
+ var key=get('key','');
+ if(!key){add('Falta la clave de Gemini. Pulsa ⚙️ y pégala.','sys');return;}
+ busy=true;add(text,'me');
+ var wait=add('Pensando…','sys');
+ convo.push({role:'user',parts:[{text:text}]});
+ try{
+  var model=get('model','gemini-3.5-flash');
+  var res=await fetch('https://generativelanguage.googleapis.com/v1beta/models/'+encodeURIComponent(model)+':generateContent',{
+   method:'POST',headers:{'Content-Type':'application/json','x-goog-api-key':key},
+   body:JSON.stringify({systemInstruction:{parts:[{text:INSTR+' Te llamas '+(nm.value||'Byte')+'.'}]},contents:convo.slice(-20)})
+  });
+  var data=await res.json();
+  if(!res.ok){throw new Error((data.error&&data.error.message)||('Error '+res.status));}
+  var a=((data.candidates&&data.candidates[0]&&data.candidates[0].content.parts)||[]).map(function(p){return p.text||'';}).join('').trim();
+  if(!a){throw new Error('Respuesta vacía');}
+  convo.push({role:'model',parts:[{text:a}]});
+  wait.className='m';wait.textContent=a;speak(a);
+ }catch(e){
+  convo.pop();
+  wait.textContent='No he podido responder: '+(e.message||'error')+'. Revisa la clave y el modelo en ⚙️.';
+ }
+ busy=false;log.scrollTop=log.scrollHeight;
+}
+function sendTyped(){var t=q.value;q.value='';ask(t);}
+$('send').onclick=sendTyped;
+q.addEventListener('keydown',function(e){if(e.key==='Enter'){sendTyped();}});
+function mkRec(){
+ if(!SR){return null;}
+ var r=new SR();r.lang='es-ES';r.continuous=true;r.interimResults=false;
+ r.onstart=function(){st.textContent='Escuchando…';};
+ r.onresult=function(ev){for(var i=ev.resultIndex;i<ev.results.length;i++){if(ev.results[i].isFinal){handle(ev.results[i][0].transcript.trim());}}};
+ r.onend=function(){recActive=false;if((wakeOn||pushMode)&&!speaking&&!busy){try{r.start();recActive=true;}catch(e){}}if(!wakeOn&&!pushMode){mic.classList.remove('rec');st.textContent='Profesor y ayudante de informática';}};
+ r.onerror=function(e){if(e.error!=='no-speech'&&e.error!=='aborted'){add('Micrófono: '+e.error,'sys');}if(e.error==='not-allowed'||e.error==='service-not-allowed'){wakeOn=false;pushMode=false;mic.classList.remove('rec');wakeBtn.textContent='Escucha por nombre: apagada';wakeBtn.classList.remove('on');}};
+ return r;
+}
+function handle(t){
+ if(pushMode&&!wakeOn){pushMode=false;stopRec();mic.classList.remove('rec');ask(t);return;}
+ if(awaiting){awaiting=false;ask(t);return;}
+ var n=norm(nm.value||'byte'),x=norm(t),i=x.indexOf(n);
+ if(i<0){return;}
+ var rest=t.slice(i+n.length).replace(/^[\s,.:;¡!¿?-]+/,'');
+ if(rest.length>2){ask(rest);}else{awaiting=true;add('Te escucho…','sys');speak('Dime');}
+}
+function startRec(){if(!rec){rec=mkRec();}if(!rec){add('Este navegador no permite reconocimiento de voz. Usa Chrome en Android.','sys');return false;}if(!recActive){try{rec.start();recActive=true;}catch(e){}}return true;}
+function stopRec(){if(rec&&recActive){try{rec.stop();}catch(e){}}}
+function pauseRec(){if(rec&&recActive){try{rec.abort();}catch(e){}recActive=false;}}
+function resumeRec(){if((wakeOn||pushMode)&&!speaking&&!recActive&&rec){try{rec.start();recActive=true;}catch(e){}}}
+mic.onclick=function(){
+ if(window.speechSynthesis){speechSynthesis.cancel();}speaking=false;
+ if(pushMode){pushMode=false;stopRec();mic.classList.remove('rec');return;}
+ pushMode=true;if(startRec()){mic.classList.add('rec');}else{pushMode=false;}
+};
+wakeBtn.onclick=function(){
+ wakeOn=!wakeOn;
+ if(wakeOn){if(!startRec()){wakeOn=false;return;}wakeBtn.textContent='Escucha por nombre: encendida';wakeBtn.classList.add('on');st.textContent='Di «'+(nm.value||'Byte')+'» y tu pregunta';}
+ else{stopRec();awaiting=false;wakeBtn.textContent='Escucha por nombre: apagada';wakeBtn.classList.remove('on');st.textContent='Profesor y ayudante de informática';}
+};
+if(!SR){mic.disabled=true;wakeBtn.disabled=true;add('Este navegador no tiene reconocimiento de voz. Puedes escribir, o abrir la app en Chrome.','sys');}
+if('serviceWorker' in navigator){navigator.serviceWorker.register('sw.js').catch(function(){});}
+</script></body></html>
